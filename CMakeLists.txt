@@ -2,7 +2,7 @@ cmake_minimum_required (VERSION 2.8)
 project (TankoRemoto CXX)
 include(FindZMQ.cmake)
 
-find_package(Boost COMPONENTS system filesystem regex REQUIRED)
+find_package(Boost COMPONENTS system filesystem program_options REQUIRED)
 include_directories(${Boost_INCLUDE_DIR})
 #include_directories(${azmq_LIBRARY_DIR})
 include_directories(${ZMQ_INCLUDE_DIRS})

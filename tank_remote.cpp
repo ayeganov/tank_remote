@@ -5,7 +5,7 @@
 #include <boost/asio/signal_set.hpp>
 #include <boost/bind.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
-#include <boost/enable_shared_from_this.hpp>
+#include <boost/program_options.hpp>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -15,6 +15,9 @@
 #include <termios.h>
 #include <unistd.h>
 #include <linux/input.h>
+
+
+namespace po = boost::program_options;
 
 
 class KeyboardState
@@ -30,15 +33,15 @@ class KeyboardState
             m_keyb_fd = open(keyb_path.data(), O_RDONLY);
             if(m_keyb_fd == -1)
             {
-                std::cerr << "ERROR: " << std::strerror(errno) << '\n';
+                std::cerr << "ERROR: Failed to initialize KeyboardState\n -- "
+                          << std::strerror(errno) << '\n';
             }
         }
 
         KeyboardState(KeyBitArray kba)
-        : m_key_map(kba)
-        {
-
-        }
+        : m_keyb_fd(0),
+          m_key_map(kba)
+        {}
 
         void update_keyboard_state()
         {
@@ -46,8 +49,8 @@ class KeyboardState
             int result = ioctl(m_keyb_fd, EVIOCGKEY(m_key_map.size()), m_key_map.data());
             if(result == -1)
             {
-                std::cerr << "ERROR: failed to update keyboard state."
-                          << "\n\t" << std::strerror(errno) << std::endl;
+                std::cerr << "ERROR: failed to update keyboard state.\n -- "
+                          << std::strerror(errno) << std::endl;
             }
         }
 
@@ -87,71 +90,54 @@ class KeyboardState
 };
 
 
-class Input : public boost::enable_shared_from_this<Input>
+class KeyListener
 {
 public:
-    typedef boost::shared_ptr<Input> Ptr;
-
-    static void create(boost::asio::io_service& io_service)
+    KeyListener(boost::asio::io_service& io_service, std::string dev_kbd)
+     : m_input_fd(io_service),
+       m_key_state(dev_kbd)
     {
-        Ptr input(new Input(io_service));
-        input->read();
+        m_input_fd.assign(STDIN_FILENO);
+        read();
     }
 
 private:
-
-    explicit Input(
-            boost::asio::io_service& io_service)
-         : _input(io_service),
-           m_key_state("/dev/input/by-path/platform-i8042-serio-0-event-kbd")
-
-    {
-        _input.assign( STDIN_FILENO );
-    }
-
     void read()
     {
         boost::asio::async_read(
-                _input,
-                boost::asio::buffer(&_command, sizeof(_command)),
+                m_input_fd,
+                boost::asio::buffer(&m_button, sizeof(m_button)),
                 boost::bind(
-                    &Input::read_handler,
-                    shared_from_this(),
+                    &KeyListener::read_handler,
+                    this,
                     boost::asio::placeholders::error,
                     boost::asio::placeholders::bytes_transferred
                     )
                 );
     }
 
-    void read_handler(
-            const boost::system::error_code& error,
-            const size_t bytes_transferred)
+    void read_handler(const boost::system::error_code& error,
+        const size_t bytes_transferred)
     {
-        if ( error ) {
+        if (error)
+        {
             std::cerr << "read error: " << boost::system::system_error(error).what() << std::endl;
             return;
         }
 
         m_key_state.update_keyboard_state();
-        if ( _command != '\n' ) {
-            std::cout << "command: " << _command << std::endl;
-        }
 
-        std::cout << m_key_state.state_as_string({ {KEY_W, 'w'},
+        std::cout << m_key_state.state_as_string({{KEY_W, 'w'},
                                                   {KEY_A, 'a'},
                                                   {KEY_S, 's'},
                                                   {KEY_D, 'd'}
                                                 }) << std::endl;
-        if(m_key_state.is_key_set(KEY_W))
-        {
-            std::cout << "You pressed W\n";
-        }
-        this->read();
+        read();
     }
 
 private:
-    boost::asio::posix::stream_descriptor _input;
-    char _command;
+    boost::asio::posix::stream_descriptor m_input_fd;
+    char m_button;
     KeyboardState m_key_state;
 };
 
@@ -159,18 +145,14 @@ private:
 class NonCanonicalStdin
 {
     public:
-        NonCanonicalStdin() : m_term(), m_old_term(), m_success(false) {}
-
-        bool init()
+        NonCanonicalStdin() : m_term(), m_old_term(), m_success(false)
         {
-            std::cout << "Retrieving the terminal." << std::endl;
-            std::cout << "stdin " << STDIN_FILENO << std::endl;
             if(tcgetattr(STDIN_FILENO, &m_term) && tcgetattr(STDIN_FILENO, &m_old_term))
             {
                 std::cerr << "ERROR: tcgetttr failed\n";
-                return -1;
+                return;
             }
-            // Switch from canonical mode to non-canonical: No line discipline, every
+            // Switch from canonical mode to non-canonical: ?No line discipline?, every
             // character typed triggers an event to whoever is polling.
             m_term.c_lflag &= ~ICANON;
             // Don't echo typed characters to the screen
@@ -181,51 +163,91 @@ class NonCanonicalStdin
             if(tcsetattr(STDIN_FILENO, TCSANOW, &m_term))
             {
                 std::cerr << "ERROR: tcsetattr failed\n";
-                return -1;
+                return;
             }
             m_success = true;
+        }
+
+        bool is_set() const
+        {
             return m_success;
         }
 
         ~NonCanonicalStdin()
         {
-            std::cout << "Restoring the terminal." << std::endl;
             if(m_success)
             {
-                std::cout << "stdin " << STDIN_FILENO << std::endl;
-                if(tcsetattr(fileno(stdin), TCSANOW, &m_old_term))
+                if(tcsetattr(STDIN_FILENO, TCSANOW, &m_old_term))
                 {
-                    std::cerr << "ERROR: failed to reset terminal settings\n";
+                    std::cerr << "ERROR: failed to reset terminal settings\n -- ";
                     std::cerr << std::strerror(errno) << std::endl;
                 }
             }
         }
 
     private:
-    struct termios m_term, m_old_term;
-    bool m_success;
+        struct termios m_term, m_old_term;
+        bool m_success;
 };
 
 
-int main()
+int main(int argc, char* argv[])
 {
+    std::string keyboard = "/dev/input/by-path/platform-i8042-serio-0-event-kbd";
+    try
     {
-        NonCanonicalStdin ncs;
+        po::options_description desc("Allowed options");
+        desc.add_options()
+            ("help,h", "This program controls the tanko roboto over the given network interface.")
+            ("keyboard,k", po::value<std::string>()->default_value(keyboard), "Provide path to keyboard device to read.")
+        ;
+        po::variables_map vm;
+        po::store(po::parse_command_line(argc, argv, desc), vm);
+        po::notify(vm);
 
-        boost::asio::io_service io;
-        boost::asio::signal_set signals(io, SIGINT, SIGTERM);
-        signals.async_wait(boost::bind(&boost::asio::io_service::stop, &io));
-
-        if(!ncs.init())
+        if(vm.count("help"))
         {
-            std::cerr << "Failed to set terminal settings.\n";
-            exit(EXIT_FAILURE);
+            std::cout << desc << '\n';
+            return 0;
         }
 
-        Input::create(io);
-
-        io.run();
+        std::string new_kb = vm["keyboard"].as<std::string>();
+        if(new_kb == keyboard)
+        {
+            std::cout << "Using default keyboard: " << keyboard << std::endl;
+        }
+        else
+        {
+            keyboard = new_kb;
+        }
     }
+    catch(std::exception& e)
+    {
+        std::cerr << "Error: " << e.what() << '\n';
+        return 1;
+    }
+    catch(...)
+    {
+        std::cerr << "Unkonwn exception!\n";
+        return 1;
+    }
+
+    NonCanonicalStdin ncs;
+
+    boost::asio::io_service io;
+    boost::asio::signal_set signals(io, SIGINT, SIGTERM);
+    signals.async_wait(boost::bind(&boost::asio::io_service::stop, &io));
+
+    if(!ncs.is_set())
+    {
+        std::cerr << "Failed to set terminal settings.\n";
+        exit(EXIT_FAILURE);
+    }
+
+    KeyListener key_listener(io, keyboard);
+
+    io.run();
+
     std::cout << "bye bye roboto" << std::endl;
     return 0;
 }
