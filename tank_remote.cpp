@@ -16,8 +16,11 @@
 #include <unistd.h>
 #include <linux/input.h>
 
+#include "robo_utils.hpp"
+
 
 namespace po = boost::program_options;
+const std::string DEF_KEYB = "/dev/input/by-path/platform-i8042-serio-0-event-kbd";
 
 
 class KeyboardState
@@ -191,35 +194,55 @@ class NonCanonicalStdin
 };
 
 
+po::variables_map process_command_args(int argc, char* argv[])
+{
+    po::options_description desc("Allowed options");
+    desc.add_options()
+        ("help,h", "This program controls the tanko roboto over the given network interface.")
+        ("keyboard,k", po::value<std::string>()->default_value(DEF_KEYB), "Provide path to keyboard device to read.")
+        ("address,a", po::value<std::string>()->required(), "Address of the tank")
+    ;
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, argv, desc), vm);
+    po::notify(vm);
+
+    if(vm.count("help"))
+    {
+        std::cout << desc << '\n';
+        exit(EXIT_SUCCESS);
+    }
+
+    return std::move(vm);
+}
+
+
 int main(int argc, char* argv[])
 {
-    std::string keyboard = "/dev/input/by-path/platform-i8042-serio-0-event-kbd";
     try
     {
-        po::options_description desc("Allowed options");
-        desc.add_options()
-            ("help,h", "This program controls the tanko roboto over the given network interface.")
-            ("keyboard,k", po::value<std::string>()->default_value(keyboard), "Provide path to keyboard device to read.")
-        ;
-        po::variables_map vm;
-        po::store(po::parse_command_line(argc, argv, desc), vm);
-        po::notify(vm);
-
-        if(vm.count("help"))
-        {
-            std::cout << desc << '\n';
-            return 0;
-        }
+        po::variables_map vm = process_command_args(argc, argv);
 
         std::string new_kb = vm["keyboard"].as<std::string>();
-        if(new_kb == keyboard)
+        if(new_kb == DEF_KEYB)
         {
-            std::cout << "Using default keyboard: " << keyboard << std::endl;
+            std::cout << "Using default keyboard: " << DEF_KEYB << std::endl;
         }
-        else
+
+        NonCanonicalStdin ncs;
+
+        boost::asio::io_service io;
+        boost::asio::signal_set signals(io, SIGINT, SIGTERM);
+        signals.async_wait(boost::bind(&boost::asio::io_service::stop, &io));
+
+        if(!ncs.is_set())
         {
-            keyboard = new_kb;
+            std::cerr << "Failed to set terminal settings.\n";
+            exit(EXIT_FAILURE);
         }
+
+        KeyListener key_listener(io, new_kb == DEF_KEYB ? DEF_KEYB : new_kb);
+
+        io.run();
     }
     catch(std::exception& e)
     {
@@ -231,22 +254,6 @@ int main(int argc, char* argv[])
         std::cerr << "Unkonwn exception!\n";
         return 1;
     }
-
-    NonCanonicalStdin ncs;
-
-    boost::asio::io_service io;
-    boost::asio::signal_set signals(io, SIGINT, SIGTERM);
-    signals.async_wait(boost::bind(&boost::asio::io_service::stop, &io));
-
-    if(!ncs.is_set())
-    {
-        std::cerr << "Failed to set terminal settings.\n";
-        exit(EXIT_FAILURE);
-    }
-
-    KeyListener key_listener(io, keyboard);
-
-    io.run();
 
     std::cout << "bye bye roboto" << std::endl;
     return 0;
