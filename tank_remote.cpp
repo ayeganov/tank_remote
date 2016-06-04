@@ -4,6 +4,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/bind.hpp>
+#include <boost/asio/buffer.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/program_options.hpp>
 #include <cerrno>
@@ -16,6 +17,7 @@
 #include <unistd.h>
 #include <linux/input.h>
 
+#include "azmq/socket.hpp"
 #include "robo_utils.hpp"
 
 
@@ -104,6 +106,12 @@ public:
         read();
     }
 
+    template<class F>
+    void on_state_change(F&& f)
+    {
+        m_on_state_change = std::move(f);
+    }
+
 private:
     void read()
     {
@@ -129,12 +137,7 @@ private:
         }
 
         m_key_state.update_keyboard_state();
-
-        std::cout << m_key_state.state_as_string({{KEY_W, 'w'},
-                                                  {KEY_A, 'a'},
-                                                  {KEY_S, 's'},
-                                                  {KEY_D, 'd'}
-                                                }) << std::endl;
+        m_on_state_change(m_key_state);
         read();
     }
 
@@ -142,6 +145,39 @@ private:
     boost::asio::posix::stream_descriptor m_input_fd;
     char m_button;
     KeyboardState m_key_state;
+    std::function<void(KeyboardState&)> m_on_state_change;
+};
+
+
+class ZmqController
+{
+    public:
+        ZmqController(std::string address,
+                      std::shared_ptr<KeyListener> key_listener,
+                      boost::asio::io_service& io)
+        : m_socket{io},
+          m_key_listener(key_listener)
+        {
+            m_socket.bind(address);
+            m_key_listener->on_state_change(std::bind(&ZmqController::on_key,
+                                            this,
+                                            std::placeholders::_1));
+        }
+
+        void on_key(KeyboardState& key_state)
+        {
+            auto active_keys = key_state.state_as_string({{KEY_W, 'w'},
+                                                          {KEY_A, 'a'},
+                                                          {KEY_S, 's'},
+                                                          {KEY_D, 'd'}
+                                                         });
+            std::cout << "Sending \"" << active_keys << "\"\n";
+            m_socket.get_socket().send(boost::asio::buffer(active_keys));
+        }
+
+    private:
+        roboutils::AzmqSock<azmq::pub_socket, 256> m_socket;
+        std::shared_ptr<KeyListener> m_key_listener;
 };
 
 
@@ -240,7 +276,8 @@ int main(int argc, char* argv[])
             exit(EXIT_FAILURE);
         }
 
-        KeyListener key_listener(io, new_kb == DEF_KEYB ? DEF_KEYB : new_kb);
+        auto key_listener = std::make_shared<KeyListener>(io, new_kb == DEF_KEYB ? DEF_KEYB : new_kb);
+        ZmqController zc{vm["address"].as<std::string>(), key_listener, io};
 
         io.run();
     }

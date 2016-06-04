@@ -86,6 +86,21 @@ class AzmqSock
             m_socket.connect(address);
         }
 
+        template<class F>
+        void on_recv(F&& f)
+        {
+            m_callback = std::move(f);
+            m_socket.async_receive(asio::buffer(m_buffer), [this](system::error_code ec, size_t bt) {
+                handle_receive(ec, bt);
+            });
+        }
+
+        SockType& get_socket()
+        {
+            return m_socket;
+        }
+
+    private:
         void handle_receive(system::error_code ec, size_t bytes_transferred)
         {
             if(ec)
@@ -100,16 +115,6 @@ class AzmqSock
             });
         }
 
-        template<class F>
-        void on_recv(F&& f)
-        {
-            m_callback = std::move(f);
-            m_socket.async_receive(asio::buffer(m_buffer), [this](system::error_code ec, size_t bt) {
-                handle_receive(ec, bt);
-            });
-        }
-
-    private:
         SockType m_socket;
         std::array<char, buf_size> m_buffer;
         std::function<void(std::string)> m_callback;
