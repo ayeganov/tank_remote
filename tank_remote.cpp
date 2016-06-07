@@ -116,15 +116,15 @@ private:
     void read()
     {
         boost::asio::async_read(
-                m_input_fd,
-                boost::asio::buffer(&m_button, sizeof(m_button)),
-                boost::bind(
-                    &KeyListener::read_handler,
-                    this,
-                    boost::asio::placeholders::error,
-                    boost::asio::placeholders::bytes_transferred
-                    )
-                );
+            m_input_fd,
+            boost::asio::buffer(&m_button, sizeof(m_button)),
+            boost::bind(
+                &KeyListener::read_handler,
+                this,
+                boost::asio::placeholders::error,
+                boost::asio::placeholders::bytes_transferred
+            )
+        );
     }
 
     void read_handler(const boost::system::error_code& error,
@@ -171,8 +171,11 @@ class ZmqController
                                                           {KEY_S, 's'},
                                                           {KEY_D, 'd'}
                                                          });
-            std::cout << "Sending \"" << active_keys << "\"\n";
-            m_socket.get_socket().send(boost::asio::buffer(active_keys));
+            if(!active_keys.empty())
+            {
+                std::cout << "Sending \"" << active_keys << "\"\n";
+                m_socket.get_socket().send(boost::asio::buffer(active_keys));
+            }
         }
 
     private:
@@ -248,7 +251,7 @@ po::variables_map process_command_args(int argc, char* argv[])
         exit(EXIT_SUCCESS);
     }
 
-    return std::move(vm);
+    return vm;
 }
 
 
@@ -284,12 +287,12 @@ int main(int argc, char* argv[])
     catch(std::exception& e)
     {
         std::cerr << "Error: " << e.what() << '\n';
-        return 1;
+        return -1;
     }
     catch(...)
     {
-        std::cerr << "Unkonwn exception!\n";
-        return 1;
+        std::cerr << "Unknown exception!\n";
+        return -1;
     }
 
     std::cout << "bye bye roboto" << std::endl;

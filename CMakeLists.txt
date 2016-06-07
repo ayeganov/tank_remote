@@ -5,7 +5,6 @@ include(FindZMQ.cmake)
 find_package(Boost COMPONENTS system filesystem program_options regex REQUIRED)
 include_directories(${Boost_INCLUDE_DIR})
 include_directories(${ZMQ_INCLUDE_DIRS})
-#include_directories(${azmq_LIBRARY_DIR})
 
 #version number
 set (TankoRemoto 0)
@@ -18,11 +17,5 @@ target_link_libraries(TankoRemoto ${ZMQ_LIBRARIES})
 
 add_definitions(-std=c++0x)
 add_definitions(${ZMQ_DEFINITIONS})
-
-add_executable(TankoReceivo receiver.cpp)
-target_link_libraries(TankoReceivo ${Boost_LIBRARIES})
-target_link_libraries(TankoReceivo pthread)
-target_link_libraries(TankoReceivo ${ZMQ_LIBRARIES})
-
 
 install(TARGETS TankoRemoto DESTINATION bin)
