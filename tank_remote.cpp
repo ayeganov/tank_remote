@@ -1,4 +1,6 @@
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 
 #include <array>
 #include <boost/asio.hpp>
@@ -8,7 +10,6 @@
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/program_options.hpp>
 #include <cerrno>
-#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -189,6 +190,8 @@ class NonCanonicalStdin
     public:
         NonCanonicalStdin() : m_term(), m_old_term(), m_success(false)
         {
+            // set the repeat character delay, and number of chars per second
+            std::system("xset r rate 20 30");
             if(tcgetattr(STDIN_FILENO, &m_term) && tcgetattr(STDIN_FILENO, &m_old_term))
             {
                 std::cerr << "ERROR: tcgetttr failed\n";
@@ -217,6 +220,7 @@ class NonCanonicalStdin
 
         ~NonCanonicalStdin()
         {
+            std::system("xset r rate");
             if(m_success)
             {
                 if(tcsetattr(STDIN_FILENO, TCSANOW, &m_old_term))
